@@ -91,7 +91,11 @@
                 connects=0, % number of successful connects
                 failed=[],  % breakdown of failed connects
                 connect_timeout=infinity, % timeout of TCP connection
-                reconnect_interval=?FIRST_RECONNECT_INTERVAL}).
+                reconnect_interval=?FIRST_RECONNECT_INTERVAL,
+                max_reconnect_interval=?MAX_RECONNECT_INTERVAL,
+                max_retries=infinity,
+                retries=0
+               }).
 -record(request, {ref :: reference(), msg :: rpb_req(), from, ctx :: ctx(), timeout :: integer(),
                   tref :: reference() | undefined }).
 
@@ -823,12 +827,21 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 parse_options([], State) ->
     %% Once all options are parsed, make sure auto_reconnect is enabled
     %% if queue_if_disconnected is enabled.
-    case State#state.queue_if_disconnected of
-        true ->
-            State#state{auto_reconnect = true};
-        _ ->
-            State
+    CheckedAutoReconnectState =
+        case State#state.queue_if_disconnected of
+            true ->
+                State#state{auto_reconnect = true};
+            _ ->
+                State
+        end,
+
+    case CheckedAutoReconnectState of
+        #state{reconnect_interval = Ri, max_reconnect_interval = Mi}
+          when Mi >= Ri -> CheckedAutoReconnectState;
+        #state{max_reconnect_interval = Mi} ->
+            CheckedAutoReconnectState#state{reconnect_interval = Mi}
     end;
+    
 parse_options([{connect_timeout, T}|Options], State) when is_integer(T) ->
     parse_options(Options, State#state{connect_timeout = T});
 parse_options([{queue_if_disconnected,Bool}|Options], State) when 
@@ -840,7 +853,19 @@ parse_options([{auto_reconnect,Bool}|Options], State) when
       Bool =:= true; Bool =:= false ->
     parse_options(Options, State#state{auto_reconnect = Bool});
 parse_options([auto_reconnect|Options], State) ->
-    parse_options([{auto_reconnect, true}|Options], State).
+    parse_options([{auto_reconnect, true}|Options], State);
+parse_options([{reconnect_interval, Val}|Options], State) when is_integer(Val),
+                                                               Val > 0 ->
+    parse_options([Options], State#state{reconnect_interval = Val});
+parse_options([{max_reconnect_interval, Val}|Options], State) when is_integer(Val),
+                                                                   Val > 0 ->
+    parse_options([Options], State#state{max_reconnect_interval = Val});
+parse_options([{max_retries, Val}|Options], State) when
+      is_integer(Val)
+      andalso Val > 0
+      orelse Val =:= infinity
+      orelse Val =:= reach_max_reconnet_interval ->
+    parse_options([Options], State#state{max_retries = Val}).
 
 maybe_reply({reply, Reply, State}) ->
     Request = State#state.active,
@@ -1139,7 +1164,7 @@ connect(State) when State#state.sock =:= undefined ->
                          [binary, {active, once}, {packet, 4}, {header, 1}],
                          State#state.connect_timeout) of
         {ok, Sock} ->
-            {ok, State#state{sock = Sock, connects = Connects+1, 
+            {ok, State#state{sock = Sock, connects = Connects+1, retries = 0,
                              reconnect_interval = ?FIRST_RECONNECT_INTERVAL}};
         Error ->
             Error
@@ -1166,12 +1191,22 @@ disconnect(State) ->
 
     %% Decide whether to reconnect or exit
     NewState = State#state{sock = undefined, active = undefined},
-    case State#state.auto_reconnect of
-        true ->
+    case State of
+        #state{auto_reconnect         = true,
+               max_retries            = reach_max_reconnet_interval,
+               reconnect_interval     = MaxReconnetInterval,
+               max_reconnect_interval = MaxReconnetInterval
+              } ->
+            {stop, disconnected, NewState};
+        #state{auto_reconnect = true,
+               retries     = Retries,
+               max_retries = MaxRetries
+              } when Retries =< MaxRetries->
             %% Schedule the reconnect message and return state
             erlang:send_after(State#state.reconnect_interval, self(), reconnect),
-            {noreply, increase_reconnect_interval(NewState)};
-        false ->
+            IncreaseIntervalState = increase_reconnect_interval(NewState),
+            {noreply, IncreaseIntervalState#state{retries = Retries+1}};
+        _ ->
             {stop, disconnected, NewState}
     end.
             
