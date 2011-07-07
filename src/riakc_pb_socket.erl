@@ -856,16 +856,16 @@ parse_options([auto_reconnect|Options], State) ->
     parse_options([{auto_reconnect, true}|Options], State);
 parse_options([{reconnect_interval, Val}|Options], State) when is_integer(Val),
                                                                Val > 0 ->
-    parse_options([Options], State#state{reconnect_interval = Val});
+    parse_options(Options, State#state{reconnect_interval = Val});
 parse_options([{max_reconnect_interval, Val}|Options], State) when is_integer(Val),
                                                                    Val > 0 ->
-    parse_options([Options], State#state{max_reconnect_interval = Val});
+    parse_options(Options, State#state{max_reconnect_interval = Val});
 parse_options([{max_retries, Val}|Options], State) when
       is_integer(Val)
       andalso Val > 0
       orelse Val =:= infinity
       orelse Val =:= reach_max_reconnet_interval ->
-    parse_options([Options], State#state{max_retries = Val}).
+    parse_options(Options, State#state{max_retries = Val}).
 
 maybe_reply({reply, Reply, State}) ->
     Request = State#state.active,
