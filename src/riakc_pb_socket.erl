@@ -50,6 +50,7 @@
          mapred_bucket/3, mapred_bucket/4, mapred_bucket/5,
          mapred_bucket_stream/5, mapred_bucket_stream/6,
          search/3, search/5, search/6,
+         get_index/4, get_index/5, get_index/6, get_index/7,
          default_timeout/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -115,7 +116,7 @@ start_link(Address, Port) ->
 %%          rather than return {error, disconnected}.  If the server comes back the
 %%          request will be submitted if the timeout has not expired.  Implies
 %%          {auto_reconnect, true}.
-%%      
+%%
 -spec start_link(address(), portnum(), options()) -> {ok, pid()} | {error, term()}.
 start_link(Address, Port, Options) when is_list(Options) ->
     gen_server:start_link(?MODULE, [Address, Port, Options], []).
@@ -136,8 +137,8 @@ start(Address, Port, Options) when is_list(Options) ->
 stop(Pid) ->
     gen_server:call(Pid, stop).
 
-%% @doc Change the options for this socket.  Allows you to connect with one 
-%%      set of optionsthen run with another (e.g. connect with no options to
+%% @doc Change the options for this socket.  Allows you to connect with one
+%%      set of options then run with another (e.g. connect with no options to
 %%      make sure the server is there, then enable queue_if_disconnected)
 set_options(Pid, Options) ->
     set_options(Pid, Options, infinity).
@@ -215,7 +216,7 @@ get(Pid, Bucket, Key, Timeout) when is_integer(Timeout); Timeout =:= infinity ->
 %%      [deletedvclock] return a vclock if a tombstone is encountered
 get(Pid, Bucket, Key, Options) ->
     get(Pid, Bucket, Key, Options, default_timeout(get_timeout)).
- 
+
 %% @doc Get bucket/key from the server supplying options and timeout
 %%      [{r, 1}] would set r=1 for the request
 %%      [{if_modified, VClock}] will return unchanged if the object's vclock matches
@@ -249,7 +250,7 @@ put(Pid, Obj, Timeout) when is_integer(Timeout); Timeout =:= infinity ->
 %%      [if_not_modified] the put fails unless riakc_obj and database vclocks match
 %%      [if_none_match] the put fails if the key already exist
 %%      Put throws siblings if the riakc_obj contains siblings
-%%      that have not been resolved by calling select_sibling/2 or 
+%%      that have not been resolved by calling select_sibling/2 or
 %%      update_value/2 and update_metadata/2.
 put(Pid, Obj, Options) ->
     put(Pid, Obj, Options, default_timeout(put_timeout)).
@@ -263,9 +264,9 @@ put(Pid, Obj, Options) ->
 %%      [if_not_modified] the put fails unless riakc_obj and database vclocks match
 %%      [if_none_match] the put fails if the key already exist
 %%      Put throws siblings if the riakc_obj contains siblings
-%%      that have not been resolved by calling select_sibling/2 or 
+%%      that have not been resolved by calling select_sibling/2 or
 %%      update_value/2 and update_metadata/2.
--spec put(pid(), riakc_obj(), riak_pbc_options(), timeout()) -> 
+-spec put(pid(), riakc_obj(), riak_pbc_options(), timeout()) ->
                  ok | {ok, riakc_obj()} | {ok, key()} | {error, term()}.
 put(Pid, Obj, Options, Timeout) ->
     Content = riakc_pb:pbify_rpbcontent({riakc_obj:get_update_metadata(Obj),
@@ -283,7 +284,7 @@ delete(Pid, Bucket, Key) ->
     delete(Pid, Bucket, Key, []).
 
 %% @doc Delete the key/value specifying timeout
--spec delete(pid(), bucket() | string(), key() | string(), 
+-spec delete(pid(), bucket() | string(), key() | string(),
              timeout() | riak_pbc_options()) -> ok | {error, term()}.
 delete(Pid, Bucket, Key, Timeout) when is_integer(Timeout); Timeout =:= infinity ->
     delete(Pid, Bucket, Key, [], Timeout);
@@ -305,7 +306,7 @@ delete(Pid, Bucket, Key, Options) ->
 %%      [{pr,quorum}] sets pr=quorum
 %%      [{pw,2}] sets pw=2
 %%      [{dw,2}] sets dw=2
--spec delete(pid(), bucket() | string(), key() | string(), 
+-spec delete(pid(), bucket() | string(), key() | string(),
              riak_pbc_options(), timeout()) -> ok | {error, term()}.
 delete(Pid, Bucket, Key, Options, Timeout) ->
     Req = delete_options(Options, #rpbdelreq{bucket = Bucket, key = Key}),
@@ -347,7 +348,7 @@ delete_vclock(Pid, Bucket, Key, VClock, Options, Timeout) ->
     gen_server:call(Pid, {req, Req, Timeout}, infinity).
 
 
-%% @doc Delete the riak object 
+%% @doc Delete the riak object
 -spec delete_obj(pid(), riakc_obj()) -> ok | {error, term()}.
 delete_obj(Pid, Obj) ->
     delete_vclock(Pid, riakc_obj:bucket(Obj), riakc_obj:key(Obj),
@@ -389,7 +390,7 @@ list_buckets(Pid, Timeout) ->
 
 %% @doc List all buckets on the server specifying server-side and local
 %%      call timeout
--spec list_buckets(pid(), timeout(), timeout()) -> {ok, [bucket()]} | 
+-spec list_buckets(pid(), timeout(), timeout()) -> {ok, [bucket()]} |
                                                    {error, term()}.
 list_buckets(Pid, Timeout, CallTimeout) ->
     gen_server:call(Pid, {req, rpblistbucketsreq, Timeout}, CallTimeout).
@@ -431,7 +432,7 @@ stream_list_keys(Pid, Bucket, Timeout) ->
 %%      The process receives these messages.
 %%        {ReqId, {keys, [key()]}}
 %%        {ReqId, done}
--spec stream_list_keys(pid(), bucket(), timeout(), timeout()) -> {ok, req_id()} | 
+-spec stream_list_keys(pid(), bucket(), timeout(), timeout()) -> {ok, req_id()} |
                                                                  {error, term()}.
 stream_list_keys(Pid, Bucket, Timeout, CallTimeout) ->
     ReqMsg = #rpblistkeysreq{bucket = Bucket},
@@ -632,28 +633,30 @@ mapred_bucket_stream(Pid, Bucket, Query, ClientPid, Timeout, CallTimeout) ->
     send_mapred_req(Pid, MapRed, ClientPid, CallTimeout).
 
 
-%% @doc Execute a search query. This command will return an error 
+%% @doc Execute a search query. This command will return an error
 %%      unless executed against a Riak Search cluster.
-%% @spec search(rhc(), bucket(), string()) -> 
+%% @spec search(rhc(), bucket(), string()) ->
 %%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
 search(Pid, Bucket, SearchQuery) ->
     %% Run a Map/Reduce operation using reduce_identity to get a list
     %% of BKeys.
-    IdentityQuery = [{reduce, {modfun, riak_kv_mapreduce, reduce_identity}, none, true}],
+    IdentityQuery = [{reduce,
+                      {modfun, riak_kv_mapreduce, reduce_identity},
+                      [{reduce_phase_only_1, true}],
+                      true}],
     case search(Pid, Bucket, SearchQuery, IdentityQuery,
                 default_timeout(search_timeout)) of
-        {ok, [{_, Results}]} -> 
+        {ok, [{_, Results}]} ->
             %% Unwrap the results.
             {ok, Results};
         Other -> Other
     end.
 
-
 %% @doc Execute a search query and feed the results into a map/reduce
 %%      query. See {@link rhc_mapred:encode_mapred/2} for details of
-%%      the allowed formats for `MRQuery'. This command will return an error 
+%%      the allowed formats for `MRQuery'. This command will return an error
 %%      unless executed against a Riak Search cluster.
-%% @spec search(rhc(), bucket(), string(), 
+%% @spec search(rhc(), bucket(), string(),
 %%       [rhc_mapred:query_part()], integer()) ->
 %%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
 search(Pid, Bucket, SearchQuery, MRQuery, Timeout) ->
@@ -662,15 +665,88 @@ search(Pid, Bucket, SearchQuery, MRQuery, Timeout) ->
 
 
 %% @doc Execute a search query and feed the results into a map/reduce
-%%      query with a timeout on the call. See {@link rhc_mapred:encode_mapred/2} 
+%%      query with a timeout on the call. See {@link rhc_mapred:encode_mapred/2}
 %%      for details of the allowed formats for `MRQuery'. This command will return
 %%      an error unless executed against a Riak Search cluster.
-%% @spec search(rhc(), bucket(), string(), 
+%% @spec search(rhc(), bucket(), string(),
 %%       [rhc_mapred:query_part()], integer(), integer()) ->
 %%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
 search(Pid, Bucket, SearchQuery, MRQuery, Timeout, CallTimeout) ->
     Inputs = {modfun, riak_search, mapred_search, [Bucket, SearchQuery]},
     mapred(Pid, Inputs, MRQuery, Timeout, CallTimeout).
+
+%% @doc Execute a secondary index query.
+%% @spec get_index(rhc(), bucket(), Index::binary(), Key::binary()) ->
+%%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
+get_index(Pid, Bucket, Index, Key) ->
+    %% Run a Map/Reduce operation using reduce_identity to get a list
+    %% of BKeys.
+    Input = {index, Bucket, Index, Key},
+    IdentityQuery = [{reduce,
+                      {modfun, riak_kv_mapreduce, reduce_identity},
+                      [{reduce_phase_only_1, true}],
+                      true}],
+    case mapred(Pid, Input, IdentityQuery) of
+        {ok, [{_, Results}]} ->
+            %% Unwrap the results.
+            {ok, Results};
+        Other -> Other
+    end.
+
+%% @doc Execute a secondary index query.
+%% @spec get_index(rhc(), bucket(), Index::binary(), Key::binary(), integer(), integer()) ->
+%%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
+get_index(Pid, Bucket, Index, Key, Timeout, CallTimeout) ->
+    %% Run a Map/Reduce operation using reduce_identity to get a list
+    %% of BKeys.
+    Input = {index, Bucket, Index, Key},
+    IdentityQuery = [{reduce,
+                      {modfun, riak_kv_mapreduce, reduce_identity},
+                      [{reduce_phase_only_1, true}],
+                      true}],
+    case mapred(Pid, Input, IdentityQuery, Timeout, CallTimeout) of
+        {ok, [{_, Results}]} ->
+            %% Unwrap the results.
+            {ok, Results};
+        Other -> Other
+    end.
+
+
+%% @doc Execute a secondary index query.
+%% @spec get_index(rhc(), bucket(), Index::binary(), StartKey::binary(), EndKey::binary()) ->
+%%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
+get_index(Pid, Bucket, Index, StartKey, EndKey) ->
+    %% Run a Map/Reduce operation using reduce_identity to get a list
+    %% of BKeys.
+    Input = {index, Bucket, Index, StartKey, EndKey},
+    IdentityQuery = [{reduce,
+                      {modfun, riak_kv_mapreduce, reduce_identity},
+                      [{reduce_phase_only_1, true}],
+                      true}],
+    case mapred(Pid, Input, IdentityQuery) of
+        {ok, [{_, Results}]} ->
+            %% Unwrap the results.
+            {ok, Results};
+        Other -> Other
+    end.
+
+%% @doc Execute a secondary index query.
+%% @spec get_index(rhc(), bucket(), Index::binary(), StartKey::binary(), EndKey::binary(), integer(), integer()) ->
+%%       {ok, [rhc_mapred:phase_result()]}|{error, term()}
+get_index(Pid, Bucket, Index, StartKey, EndKey, Timeout, CallTimeout) ->
+    %% Run a Map/Reduce operation using reduce_identity to get a list
+    %% of BKeys.
+    Input = {index, Bucket, Index, StartKey, EndKey},
+    IdentityQuery = [{reduce,
+                      {modfun, riak_kv_mapreduce, reduce_identity},
+                      [{reduce_phase_only_1, true}],
+                      true}],
+    case mapred(Pid, Input, IdentityQuery, Timeout, CallTimeout) of
+        {ok, [{_, Results}]} ->
+            %% Unwrap the results.
+            {ok, Results};
+        Other -> Other
+    end.
 
 
 %% @spec default_timeout(OpTimeout) -> timeout()
@@ -695,9 +771,9 @@ default_timeout(OpTimeout) ->
 
 %% @private
 init([Address, Port, Options]) ->
-    %% Schedule a reconnect as the first action.  If the server is up then 
+    %% Schedule a reconnect as the first action.  If the server is up then
     %% the handle_info(reconnect) will run before any requests can be sent.
-    State = parse_options(Options, #state{address = Address, 
+    State = parse_options(Options, #state{address = Address,
                                           port = Port,
                                           queue = queue:new()}),
     case State#state.auto_reconnect of
@@ -712,7 +788,7 @@ init([Address, Port, Options]) ->
                     Ok
             end
     end.
-        
+
 %% @private
 handle_call({req, Msg, Timeout}, From, State) when State#state.sock =:= undefined ->
     case State#state.queue_if_disconnected of
@@ -754,7 +830,7 @@ handle_info({tcp_error, _Socket, Reason}, State) ->
     error_logger:error_msg("PBC client TCP error for ~p:~p - ~p\n",
                            [State#state.address, State#state.port, Reason]),
     disconnect(State);
-    
+
 handle_info({tcp_closed, _Socket}, State) ->
     disconnect(State);
 
@@ -806,7 +882,7 @@ handle_info(reconnect, State) ->
             disconnect(NewState)
     end;
 handle_info(_, State) ->
-    {noreply, State}.            
+    {noreply, State}.
 
 %% @private
 handle_cast(_Msg, State) ->
@@ -844,12 +920,12 @@ parse_options([], State) ->
     
 parse_options([{connect_timeout, T}|Options], State) when is_integer(T) ->
     parse_options(Options, State#state{connect_timeout = T});
-parse_options([{queue_if_disconnected,Bool}|Options], State) when 
+parse_options([{queue_if_disconnected,Bool}|Options], State) when
       Bool =:= true; Bool =:= false ->
     parse_options(Options, State#state{queue_if_disconnected = Bool});
 parse_options([queue_if_disconnected|Options], State) ->
     parse_options([{queue_if_disconnected, true}|Options], State);
-parse_options([{auto_reconnect,Bool}|Options], State) when 
+parse_options([{auto_reconnect,Bool}|Options], State) when
       Bool =:= true; Bool =:= false ->
     parse_options(Options, State#state{auto_reconnect = Bool});
 parse_options([auto_reconnect|Options], State) ->
@@ -877,7 +953,7 @@ maybe_reply({noreply, State}) ->
 %% @private
 %% Reply to caller - form clause first in case a ReqId/Client was passed
 %% in as the context and gen_server:reply hasn't been called yet.
-send_caller(Msg, #request{ctx = {ReqId, Client}, 
+send_caller(Msg, #request{ctx = {ReqId, Client},
                           from = undefined}=Request) ->
     Client ! {ReqId, Msg},
     Request;
@@ -941,7 +1017,7 @@ normalize_rw_value(quorum) -> ?RIAKC_RW_QUORUM;
 normalize_rw_value(all) -> ?RIAKC_RW_ALL;
 normalize_rw_value(default) -> ?RIAKC_RW_DEFAULT;
 normalize_rw_value(N) -> N.
-     
+
 
 %% Process response from the server - passes back in the request and
 %% context the request was issued with.
@@ -1005,9 +1081,9 @@ process_response(#request{msg = #rpbputreq{bucket = Bucket, key = Key}},
                      key = NewKey}, State) ->
     Contents = riakc_pb:erlify_rpbcontents(RpbContents),
     ReturnKey = case NewKey of
-        undefined -> Key;
-        _ -> NewKey
-    end,
+                    undefined -> Key;
+                    _ -> NewKey
+                end,
     {reply, {ok, riakc_obj:new_obj(Bucket, ReturnKey, Vclock, Contents)}, State};
 
 process_response(#request{msg = #rpbdelreq{}},
@@ -1109,7 +1185,7 @@ send_mapred_req(Pid, MapRed, ClientPid, CallTimeout) ->
     ReqMsg = #rpbmapredreq{request = encode_mapred_req(MapRed),
                            content_type = <<"application/x-erlang-binary">>},
     ReqId = mk_reqid(),
-    %% Add an extra 100ms to the mapred timeout and use that for the 
+    %% Add an extra 100ms to the mapred timeout and use that for the
     %% socket timeout.  This should give the map/reduce a chance to fail and let us know.
     Timeout = proplists:get_value(timeout, MapRed, default_timeout(mapred_timeout)) + 100,
     gen_server:call(Pid, {req, ReqMsg, Timeout, {ReqId, ClientPid}}, CallTimeout).
@@ -1209,7 +1285,7 @@ disconnect(State) ->
         _ ->
             {stop, disconnected, NewState}
     end.
-            
+
 %% Double the reconnect interval up to the maximum
 increase_reconnect_interval(State) ->
     case State#state.reconnect_interval of
@@ -1313,12 +1389,12 @@ decode_mapred_resp(Data, <<"application/x-erlang-binary">>) ->
 -include_lib("eunit/include/eunit.hrl").
 -include("riakc_obj.hrl").
 
-%% Get the test host - check env RIAK_TEST_PB_HOST then env 'RIAK_TEST_HOST'
+%% Get the test host - check env RIAK_TEST_PB_HOST then env 'RIAK_TEST_HOST_1'
 %% falling back to 127.0.0.1
 test_ip() ->
     case os:getenv("RIAK_TEST_PB_HOST") of
         false ->
-            case os:getenv("RIAK_TEST_HOST") of
+            case os:getenv("RIAK_TEST_HOST_1") of
                 false ->
                     "127.0.0.1";
                 Host ->
@@ -1328,9 +1404,9 @@ test_ip() ->
             Host
     end.
 
-%% Test port - check env RIAK_TEST_PB_PORT            
+%% Test port - check env RIAK_TEST_PBC_1
 test_port() ->
-    case os:getenv("RIAK_TEST_PB_PORT") of
+    case os:getenv("RIAK_TEST_PBC_1") of
         false ->
             8087;
         PortStr ->
@@ -1339,14 +1415,14 @@ test_port() ->
 
 %% Riak node under test - used to setup/configure/tweak it for tests
 test_riak_node() ->
-    case os:getenv("RIAK_TEST_NODE") of
+    case os:getenv("RIAK_TEST_NODE_1") of
         false ->
             'riak@127.0.0.1';
         NodeStr ->
             list_to_atom(NodeStr)
     end.
 
-%% Node for the eunit node for distributed erlang 
+%% Node for the eunit node for distributed erlang
 test_eunit_node() ->
     case os:getenv("RIAK_EUNIT_NODE") of
         false ->
@@ -1363,23 +1439,28 @@ test_cookie() ->
         CookieStr ->
             list_to_atom(CookieStr)
     end.
-    
+
 
 reset_riak() ->
+    %% sleep because otherwise we're going to kill the vnodes too fast
+    %% for the supervisor's maximum restart frequency, which will bring
+    %% down the entire node
+    timer:sleep(500),
+
     ?assertEqual(ok, maybe_start_network()),
 
     %% Until there is a good way to empty the vnodes, require the
     %% test to run with ETS and kill the vnode master/sup to empty all the ETS tables
     %% and the ring manager to remove any bucket properties
-    ok = rpc:call(test_riak_node(), application, set_env, [riak_kv, storage_backend, riak_kv_ets_backend]),
+    ok = rpc:call(test_riak_node(), application, set_env, [riak_kv, storage_backend, riak_kv_memory_backend]),
 
     %% Restart the vnodes so they come up with ETS
     ok = supervisor:terminate_child({riak_kv_sup, test_riak_node()}, riak_kv_vnode_master),
     ok = supervisor:terminate_child({riak_core_sup, test_riak_node()}, riak_core_vnode_sup),
     {ok, _} = supervisor:restart_child({riak_core_sup, test_riak_node()}, riak_core_vnode_sup),
     {ok, _} = supervisor:restart_child({riak_kv_sup, test_riak_node()}, riak_kv_vnode_master),
-    
-    %% Clear the map/reduce cache 
+
+    %% Clear the map/reduce cache
     ok = rpc:call(test_riak_node(), riak_kv_mapred_cache, clear, []),
 
     %% Now reset the ring so bucket properties are default
@@ -1430,7 +1511,7 @@ bad_connect_test() ->
 queue_disconnected_test() ->
     %% Start with an unlikely port number
     {ok, Pid} = start({127,0,0,1}, 65535, [queue_if_disconnected]),
-    ?assertEqual({error, timeout}, ping(Pid, 10)),    
+    ?assertEqual({error, timeout}, ping(Pid, 10)),
     ?assertEqual({error, timeout}, list_keys(Pid, <<"b">>, 10)),
     stop(Pid).
 
@@ -1568,10 +1649,10 @@ live_node_tests() ->
       ?_test( begin
                   %% Make sure originally there
                   {ok, Pid} = start_link(test_ip(), test_port()),
-                  
+
                   %% Change the options to allow reconnection/queueing
                   set_options(Pid, [queue_if_disconnected]),
-                  
+
                   %% Kill the socket
                   kill_riak_pb_sockets(),
                   ?assertEqual(pong, ?MODULE:ping(Pid)),
@@ -1765,7 +1846,7 @@ live_node_tests() ->
                  ?MODULE:delete(Pid1, <<"multibucket">>, <<"foo">>)
              end)},
 
-     {"update object test", 
+     {"update object test",
       ?_test(begin
                  reset_riak(),
                  {ok, Pid} = start_link(test_ip(), test_port()),
@@ -1881,7 +1962,7 @@ live_node_tests() ->
                                               {<<"bucket">>, <<"baz">>}],
                                              [{map, {jsanon, <<"function (v) { return [1]; }">>},
                                                undefined, false},
-                                              {reduce, {jsanon, 
+                                              {reduce, {jsanon,
                                                         <<"function(v) {
                                                              total = v.reduce(
                                                                function(prev,curr,idx,array) {
@@ -2002,12 +2083,13 @@ live_node_tests() ->
      {"map reduce bad inputs",
       ?_test(begin
                  {ok, Pid} = start_link(test_ip(), test_port()),
-                 ?assertEqual({error, <<"{inputs,{\"Inputs must be a binary bucket, a tuple of bucket and key-filters, a list of target tuples, or a modfun tuple:\",\n         undefined}}">>},
-                              ?MODULE:mapred(Pid, undefined,
+                 Res = ?MODULE:mapred(Pid, undefined,
                                              [{map, {jsfun, <<"Riak.mapValuesJson">>},
                                                undefined, false},
                                               {reduce, {jsfun, <<"Riak.reduceSum">>},
-                                               undefined, true}]))
+                                               undefined, true}]),
+                 ?assertEqual({error, <<"{inputs,{\"Inputs must be a binary bucket, a tuple of bucket and key-filters, a list of target tuples, or a search, index, or modfun tuple:\",\n         undefined}}">>},
+                              Res )
              end)},
      {"map reduce bad input keys",
       ?_test(begin
@@ -2046,7 +2128,7 @@ live_node_tests() ->
                  {ok, Pid} = start_link(test_ip(), test_port()),
                  {ok, GotBinObj} = ?MODULE:get(Pid, <<"b">>, <<"a_bin">>),
                  {ok, GotTermObj} = ?MODULE:get(Pid, <<"b">>, <<"a_term">>),
-  
+
                  ?assertEqual(riakc_obj:get_value(GotBinObj), MyBin),
                  ?assertEqual(riakc_obj:get_content_type(GotTermObj),
                               "application/x-erlang-binary"),
